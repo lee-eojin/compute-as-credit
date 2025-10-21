@@ -173,32 +173,40 @@ curl -H "Authorization: Bearer <TOKEN>" \
 
 ## Development
 
-### Project Structure
+### Key Components by Module
 
-```
-src/main/java/com/yourco/compute/
-├── api/                    # API Gateway
-│   ├── controller/         # REST endpoints (JobController)
-│   ├── security/           # JWT + OAuth2 (SecurityConfig)
-│   ├── dto/                # JobApiModels (SubmitReq, SubmitRes, JobRes)
-│   └── infra/              # IdempotencyService
-├── orchestrator/
-│   ├── service/            # JobOrchestrator (core orchestration logic)
-│   ├── quotes/             # QuoteService (provider price aggregation)
-│   ├── selector/           # SelectionPolicy + BalancedPolicy
-│   ├── outbox/             # OutboxPublisher (RabbitMQ events)
-│   ├── storage/            # StorageService (S3 presigned URLs)
-│   ├── usage/              # UsagePollingService (periodic polling)
-│   └── reconcile/          # Reconciler (stuck job recovery)
-├── billing/
-│   └── ledger/             # LedgerEntities, LedgerRepos, LedgerService
-├── domain/
-│   ├── model/              # Job, JobStatus, Provider, OutboxEvent
-│   └── repo/               # JobRepository, OutboxEventRepository
-└── shared/
-    ├── events/             # DomainEvents (JobSubmitted, JobStarted, etc.)
-    └── messaging/          # RabbitConfig (exchange + queue setup)
-```
+**api-gateway/**
+- `JobController` - REST endpoints (submit, get, allocate I/O)
+- `SecurityConfig` - JWT + OAuth2 resource server
+- `JobApiModels` - DTO records (SubmitReq, SubmitRes, JobRes)
+- `IdempotencyService` - Request deduplication
+
+**orchestrator/**
+- `JobOrchestrator` - Core job lifecycle management
+- `QuoteService` - Provider price aggregation
+- `SelectionPolicy` + `BalancedPolicy` - Provider selection
+- `OutboxPublisher` - RabbitMQ event publishing
+- `StorageService` - S3 presigned URL generation
+- `UsagePollingService` - Periodic usage polling
+- `Reconciler` - Stuck job recovery
+
+**billing/**
+- `LedgerEntities` - Account, Entry, Posting entities
+- `LedgerRepos` - JPA repositories
+- `LedgerService` - Double-entry accounting logic
+
+**domain/**
+- `Job`, `JobStatus`, `Provider`, `OutboxEvent` - Core entities
+- `JobRepository`, `OutboxEventRepository` - JPA repositories
+
+**shared/**
+- `DomainEvents` - Event records (JobSubmitted, JobStarted, etc.)
+- `RabbitConfig` - Exchange + queue setup
+
+**adapters-***
+- `ProviderClient` - Provider abstraction interface
+- `RunPodClient` - RunPod API integration
+- `FakeProviderClient` - Mock for testing
 
 ### Running Tests
 
