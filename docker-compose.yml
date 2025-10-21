@@ -1,0 +1,27 @@
+version: "3.9"
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: compute-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: compute
+      MYSQL_USER: app
+      MYSQL_PASSWORD: app
+    ports: ["3306:3306"]
+    command: ["--default-authentication-plugin=mysql_native_password", "--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: compute-rabbit
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+
+volumes:
+  mysql-data:
