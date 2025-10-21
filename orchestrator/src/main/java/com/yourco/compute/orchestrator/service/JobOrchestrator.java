@@ -10,7 +10,7 @@ import com.yourco.compute.domain.model.Job;
 import com.yourco.compute.domain.model.JobStatus;
 import com.yourco.compute.domain.repo.JobRepository;
 import com.yourco.compute.orchestrator.selector.BalancedPolicy;
-import com.yourco.compute.orchestrator.selector.ProviderSelectionPolicy;
+import com.yourco.compute.orchestrator.selector.SelectionPolicy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,7 +26,7 @@ public class JobOrchestrator {
   private final JobRepository jobs;
   private final LedgerService ledger;
   private final Map<String, ProviderClient> providers;
-  private final ProviderSelectionPolicy policy = new BalancedPolicy();
+  private final SelectionPolicy policy = new BalancedPolicy();
   private final OutboxEventRepository outbox;
   private final QuoteService quotes;
 
@@ -53,10 +53,10 @@ public class JobOrchestrator {
     outbox.save(ev);
 
     List<QuoteService.Quote> qs = quotes.getQuotes("us-east-1", "A100-80G");
-    List<ProviderSelectionPolicy.Quote> policyQuotes = qs.stream()
-        .map(q -> new ProviderSelectionPolicy.Quote(q.provider(), q.onDemandPerHour(), q.latencyMs(), q.reliability()))
+    List<SelectionPolicy.Quote> policyQuotes = qs.stream()
+        .map(q -> new SelectionPolicy.Quote(q.provider(), q.onDemandPerHour(), q.latencyMs(), q.reliability()))
         .toList();
-    ProviderSelectionPolicy.Quote choice = policy.pick(policyQuotes);
+    SelectionPolicy.Quote choice = policy.pick(policyQuotes);
 
     BigDecimal hold = BigDecimal.valueOf(choice.estCost() * 1.2);
     ledger.hold(UUID.randomUUID(), saved.getUserId(), hold, saved.getId());

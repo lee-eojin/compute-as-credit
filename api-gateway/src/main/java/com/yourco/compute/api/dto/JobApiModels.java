@@ -2,7 +2,7 @@ package com.yourco.compute.api.dto;
 
 import jakarta.validation.constraints.*;
 
-public class JobDtos {
+public class JobApiModels {
   public record SubmitReq(
     @NotNull Long userId,
     String agentSpec,

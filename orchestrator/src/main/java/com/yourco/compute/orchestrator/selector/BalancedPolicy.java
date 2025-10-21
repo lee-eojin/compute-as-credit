@@ -3,7 +3,7 @@ package com.yourco.compute.orchestrator.selector;
 import java.util.Comparator;
 import java.util.List;
 
-public class BalancedPolicy implements ProviderSelectionPolicy {
+public class BalancedPolicy implements SelectionPolicy {
   @Override
   public Quote pick(List<Quote> qs) {
     return qs.stream().min(Comparator.comparingDouble(this::score)).orElseThrow();

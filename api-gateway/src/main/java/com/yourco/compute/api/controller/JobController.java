@@ -1,6 +1,6 @@
 package com.yourco.compute.api.controller;
 
-import com.yourco.compute.api.dto.JobDtos.*;
+import com.yourco.compute.api.dto.JobApiModels.*;
 import com.yourco.compute.api.infra.IdempotencyService;
 import com.yourco.compute.domain.model.Job;
 import com.yourco.compute.domain.model.JobStatus;

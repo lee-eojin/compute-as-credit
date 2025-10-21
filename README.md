@@ -178,20 +178,26 @@ curl -H "Authorization: Bearer <TOKEN>" \
 ```
 src/main/java/com/yourco/compute/
 ├── api/                    # API Gateway
-│   ├── controller/         # REST endpoints
-│   ├── security/           # JWT + OAuth2 config
-│   └── dto/                # Request/Response objects
+│   ├── controller/         # REST endpoints (JobController)
+│   ├── security/           # JWT + OAuth2 (SecurityConfig)
+│   ├── dto/                # JobApiModels (SubmitReq, SubmitRes, JobRes)
+│   └── infra/              # IdempotencyService
 ├── orchestrator/
-│   ├── service/            # JobOrchestrator
-│   ├── quotes/             # Provider quote aggregation
-│   ├── selector/           # Selection policy (Balanced, Cheapest, etc.)
-│   ├── outbox/             # Event publisher
-│   └── reconcile/          # Stuck job recovery
+│   ├── service/            # JobOrchestrator (core orchestration logic)
+│   ├── quotes/             # QuoteService (provider price aggregation)
+│   ├── selector/           # SelectionPolicy + BalancedPolicy
+│   ├── outbox/             # OutboxPublisher (RabbitMQ events)
+│   ├── storage/            # StorageService (S3 presigned URLs)
+│   ├── usage/              # UsagePollingService (periodic polling)
+│   └── reconcile/          # Reconciler (stuck job recovery)
 ├── billing/
-│   └── ledger/             # Double-entry accounting
-└── domain/
-    ├── model/              # JPA entities
-    └── repo/               # Spring Data repositories
+│   └── ledger/             # LedgerEntities, LedgerRepos, LedgerService
+├── domain/
+│   ├── model/              # Job, JobStatus, Provider, OutboxEvent
+│   └── repo/               # JobRepository, OutboxEventRepository
+└── shared/
+    ├── events/             # DomainEvents (JobSubmitted, JobStarted, etc.)
+    └── messaging/          # RabbitConfig (exchange + queue setup)
 ```
 
 ### Running Tests
