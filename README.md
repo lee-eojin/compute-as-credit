@@ -10,15 +10,7 @@
 >
 > Intelligent job scheduling across multiple compute providers with double-entry accounting
 
-> 본 프로젝트는 포트폴리오 및 데모 프로젝트용입니다.
->
-> 멀티 프로바이더 GPU 오케스트레이터 및 크레딧 기반 과금 시스템
->
-> 복수 컴퓨팅 프로바이더 간 지능형 작업 스케줄링 및 복식부기 회계 처리
-
 A production-ready Spring Boot microservices platform for managing AI/ML workloads across multiple cloud GPU providers (RunPod, AWS, GCP, etc.) with automatic cost optimization, credit-based billing, and comprehensive observability.
-
-RunPod, AWS, GCP 등 다수의 클라우드 GPU 프로바이더를 통합 관리하는 프로덕션 레벨 Spring Boot 마이크로서비스 플랫폼. 자동 비용 최적화, 크레딧 기반 과금, 포괄적 관찰성 제공.
 
 ## Table of Contents
 
