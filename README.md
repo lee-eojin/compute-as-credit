@@ -52,15 +52,10 @@ A production-ready Spring Boot microservices platform for managing AI/ML workloa
 
 ```
 compute-as-credit/
-├── api-gateway          # REST API + Security + Swagger
-├── orchestrator         # Job lifecycle + Provider selection
-├── billing              # Double-entry ledger
-├── domain               # Core entities + JPA repositories
-├── shared               # RabbitMQ config + Events
-├── adapters-core        # Provider client interface
-├── adapters-fake        # Mock provider for testing
-├── adapters-runpod      # RunPod API integration
-└── agent-sdk            # Client library for AI agents
+├── domain       # Core entities, JPA repositories, RabbitMQ config, events
+├── adapters     # ProviderClient interface + RunPod & fake implementations
+├── app          # REST API, orchestration, billing, security (Spring Boot main)
+└── agent-sdk    # Client library for AI agents
 ```
 
 ### Data Flow
@@ -130,7 +125,7 @@ docker compose ps
 # Run API Gateway (http://localhost:8080)
 make run
 # OR
-./gradlew :api-gateway:bootRun
+./gradlew :app:bootRun
 ```
 
 ### 4. Explore API
@@ -167,13 +162,22 @@ curl -H "Authorization: Bearer <TOKEN>" \
 
 ### Key Components by Module
 
-**api-gateway/**
+**domain/**
+- `Job`, `JobStatus`, `Provider`, `OutboxEvent` - Core entities
+- `JobRepository`, `OutboxEventRepository` - JPA repositories
+- `DomainEvents` - Event records (JobSubmitted, JobStarted, etc.)
+- `RabbitConfig` - Exchange + queue setup
+
+**adapters/**
+- `ProviderClient` - Provider abstraction interface
+- `RunPodClient` - RunPod API integration
+- `FakeProviderClient` - Mock for testing
+
+**app/**
 - `JobController` - REST endpoints (submit, get, allocate I/O)
 - `SecurityConfig` - JWT + OAuth2 resource server
 - `JobApiModels` - DTO records (SubmitReq, SubmitRes, JobRes)
 - `IdempotencyService` - Request deduplication
-
-**orchestrator/**
 - `JobOrchestrator` - Core job lifecycle management
 - `QuoteService` - Provider price aggregation
 - `SelectionPolicy` + `BalancedPolicy` - Provider selection
@@ -181,24 +185,7 @@ curl -H "Authorization: Bearer <TOKEN>" \
 - `StorageService` - S3 presigned URL generation
 - `UsagePollingService` - Periodic usage polling
 - `Reconciler` - Stuck job recovery
-
-**billing/**
-- `LedgerEntities` - Account, Entry, Posting entities
-- `LedgerRepos` - JPA repositories
 - `LedgerService` - Double-entry accounting logic
-
-**domain/**
-- `Job`, `JobStatus`, `Provider`, `OutboxEvent` - Core entities
-- `JobRepository`, `OutboxEventRepository` - JPA repositories
-
-**shared/**
-- `DomainEvents` - Event records (JobSubmitted, JobStarted, etc.)
-- `RabbitConfig` - Exchange + queue setup
-
-**adapters-***
-- `ProviderClient` - Provider abstraction interface
-- `RunPodClient` - RunPod API integration
-- `FakeProviderClient` - Mock for testing
 
 ### Running Tests
 
@@ -207,7 +194,7 @@ curl -H "Authorization: Bearer <TOKEN>" \
 ./gradlew test
 
 # Run specific module tests
-./gradlew :api-gateway:test
+./gradlew :app:test
 
 # Skip tests during build
 ./gradlew build -x test
@@ -224,7 +211,7 @@ Migrations run automatically on application startup.
 
 ### Adding a New Provider
 
-1. Create adapter in `adapters-{provider}/`
+1. Add adapter class in `adapters/`
 2. Implement `ProviderClient` interface
 3. Add `@Component` annotation
 4. Update `QuoteService` to fetch quotes
@@ -318,8 +305,8 @@ SUBMITTED → QUEUED → PROVISIONING → RUNNING → SUCCEEDED
 ### Integration Tests
 
 ```bash
-# API Gateway integration test (Testcontainers)
-./gradlew :api-gateway:test
+# Integration tests (Testcontainers)
+./gradlew :app:test
 
 # WireMock test for RunPod adapter
 ./gradlew :adapters-runpod:test
