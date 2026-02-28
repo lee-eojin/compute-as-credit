@@ -2,7 +2,6 @@ package com.yourco.compute.adapters.runpod;
 
 import com.yourco.compute.adapters.core.*;
 import com.yourco.compute.domain.model.Job;
-import org.springframework.http.*;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
 

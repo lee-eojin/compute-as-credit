@@ -17,4 +17,5 @@ public class IdempotencyKey {
   public String getKey(){return key;}
   public String getScope(){return scope;}
   public Long getJobId(){return jobId;}
+  public Instant getCreatedAt(){return createdAt;}
 }
