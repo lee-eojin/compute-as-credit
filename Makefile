@@ -16,7 +16,7 @@ test:      ## Run unit/integration tests
 	./gradlew test
 
 run:       ## Run api-gateway
-	./gradlew :api-gateway:bootRun
+	./gradlew :app:bootRun
 
 api:       ## Open Swagger UI
 	python3 -c "import webbrowser; webbrowser.open('http://localhost:8080/swagger-ui.html')"

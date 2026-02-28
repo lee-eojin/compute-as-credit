@@ -1,5 +1,6 @@
 {
     "java.compile.nullAnalysis.mode": "automatic",
     "java.project.packagePresentation": "flat",
-    "explorer.compactFolders": true
+    "explorer.compactFolders": true,
+    "java.configuration.updateBuildConfiguration": "interactive"
 }

@@ -39,6 +39,6 @@ subprojects {
   }
 }
 
-project(":api-gateway") {
+project(":app") {
   apply(plugin = "org.springframework.boot")
 }
