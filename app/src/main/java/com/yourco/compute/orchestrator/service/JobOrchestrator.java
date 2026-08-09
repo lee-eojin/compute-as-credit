@@ -1,10 +1,16 @@
 package com.yourco.compute.orchestrator.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yourco.compute.adapters.core.ProviderClient;
 import com.yourco.compute.adapters.core.ProvisionResult;
 import com.yourco.compute.billing.ledger.LedgerService;
+import com.yourco.compute.domain.error.BudgetExceededException;
+import com.yourco.compute.domain.error.JobNotFoundException;
 import com.yourco.compute.domain.model.OutboxEvent;
+import com.yourco.compute.domain.model.Provider;
+import com.yourco.compute.domain.model.ResourceHint;
 import com.yourco.compute.domain.repo.OutboxEventRepository;
+import com.yourco.compute.domain.repo.ProviderRepository;
 import com.yourco.compute.orchestrator.quotes.QuoteService;
 import com.yourco.compute.domain.model.Job;
 import com.yourco.compute.domain.model.JobStatus;
@@ -23,19 +29,26 @@ import java.util.stream.Collectors;
 
 @Service
 public class JobOrchestrator {
+  private static final BigDecimal HOLD_MARGIN = BigDecimal.valueOf(1.2);
+
   private final JobRepository jobs;
   private final LedgerService ledger;
   private final Map<String, ProviderClient> providers;
   private final SelectionPolicy policy = new BalancedPolicy();
   private final OutboxEventRepository outbox;
   private final QuoteService quotes;
+  private final ProviderRepository providerRegistry;
+  private final ObjectMapper mapper;
 
   public JobOrchestrator(JobRepository jobs, LedgerService ledger, List<ProviderClient> providerClients,
-                         OutboxEventRepository outbox, QuoteService quotes){
+                         OutboxEventRepository outbox, QuoteService quotes,
+                         ProviderRepository providerRegistry, ObjectMapper mapper){
     this.jobs = jobs;
     this.ledger = ledger;
     this.outbox = outbox;
     this.quotes = quotes;
+    this.providerRegistry = providerRegistry;
+    this.mapper = mapper;
     this.providers = providerClients.stream()
         .collect(Collectors.toMap(pc -> pc.getClass().getSimpleName(), pc -> pc));
   }
@@ -45,20 +58,23 @@ public class JobOrchestrator {
     job.setStatus(JobStatus.QUEUED);
     Job saved = jobs.save(job);
 
-    OutboxEvent ev = new OutboxEvent();
-    ev.setEventType("JobSubmitted");
-    ev.setAggregateType("Job");
-    ev.setAggregateId(saved.getId());
-    ev.setPayload("{\"jobId\":" + saved.getId() + "}");
-    outbox.save(ev);
+    outbox.save(event("JobSubmitted", saved.getId()));
 
-    List<QuoteService.Quote> qs = quotes.getQuotes("us-east-1", "A100-80G");
+    ResourceHint hint = ResourceHint.parse(mapper, saved.getResourceHint());
+    List<QuoteService.Quote> qs = quotes.getQuotes(hint.region(), hint.gpuType());
     List<SelectionPolicy.Quote> policyQuotes = qs.stream()
         .map(q -> new SelectionPolicy.Quote(q.provider(), q.onDemandPerHour(), q.latencyMs(), q.reliability()))
         .toList();
     SelectionPolicy.Quote choice = policy.pick(policyQuotes);
 
-    BigDecimal hold = BigDecimal.valueOf(choice.estCost() * 1.2);
+    BigDecimal hold = BigDecimal.valueOf(choice.ratePerHour()).multiply(HOLD_MARGIN);
+    if (saved.getMaxBudget() != null) {
+      BigDecimal cap = BigDecimal.valueOf(saved.getMaxBudget());
+      if (hold.compareTo(cap) > 0) {
+        throw new BudgetExceededException(hold, cap);
+      }
+    }
+
     ledger.hold(UUID.randomUUID(), saved.getUserId(), hold, saved.getId());
 
     ProviderClient client = providers.get(choice.provider());
@@ -67,25 +83,42 @@ public class JobOrchestrator {
       jobs.save(saved);
       throw new IllegalStateException("Provider not found: " + choice.provider());
     }
+    Provider provider = providerRegistry.findByName(choice.provider())
+        .orElseThrow(() -> new IllegalStateException("Provider is not registered: " + choice.provider()));
 
     ProvisionResult pr = client.provision(saved);
     client.start(pr.instanceId());
 
+    saved.setProviderId(provider.getId());
     saved.setStatus(JobStatus.RUNNING);
     saved.setStartedAt(Instant.now());
 
-    OutboxEvent ev2 = new OutboxEvent();
-    ev2.setEventType("JobStarted");
-    ev2.setAggregateType("Job");
-    ev2.setAggregateId(saved.getId());
-    ev2.setPayload("{\"jobId\":" + saved.getId() + "}");
-    outbox.save(ev2);
+    outbox.save(event("JobStarted", saved.getId()));
 
     return jobs.save(saved);
   }
 
   @Transactional(readOnly = true)
   public Job get(long id){
-    return jobs.findById(id).orElseThrow();
+    return jobs.findById(id).orElseThrow(() -> new JobNotFoundException(id));
+  }
+
+  /** Another user's job is reported as missing rather than forbidden, so ids stay unguessable. */
+  @Transactional(readOnly = true)
+  public Job getForUser(long id, long userId){
+    Job job = get(id);
+    if (!job.isOwnedBy(userId)) {
+      throw new JobNotFoundException(id);
+    }
+    return job;
+  }
+
+  private OutboxEvent event(String type, Long jobId){
+    OutboxEvent ev = new OutboxEvent();
+    ev.setEventType(type);
+    ev.setAggregateType("Job");
+    ev.setAggregateId(jobId);
+    ev.setPayload("{\"jobId\":" + jobId + "}");
+    return ev;
   }
 }

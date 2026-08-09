@@ -69,10 +69,11 @@ public class LedgerService {
   }
 
   private LedgerAccount getOrCreateNamed(long userId, LedgerAccount.Type type, String name){
-    return accountRepo.findByUserIdAndType(userId, type).orElseGet(() -> {
+    return accountRepo.findByUserIdAndTypeAndName(userId, type, name).orElseGet(() -> {
       LedgerAccount account = new LedgerAccount();
       account.setUserId(userId);
       account.setType(type);
+      account.setName(name);
       account.setCurrency("USD");
       return accountRepo.save(account);
     });
