@@ -44,7 +44,6 @@ A production-ready Spring Boot microservices platform for managing AI/ML workloa
 - **Billing Module**: Ledger-based accounting with ACID guarantees
 - **Adapters**: RunPod integration (fake adapter for testing)
 - **Storage Service**: Presigned URL generation for S3/blob storage I/O
-- **Reconciliation**: Periodic sync to detect and recover stuck jobs
 
 ## Architecture
 
@@ -138,7 +137,8 @@ Or via curl:
 # Use https://jwt.io to create a token with:
 # - Algorithm: HS256
 # - Secret: dev-secret
-# - Payload: {"sub": "user1", "scope": "jobs:read jobs:write"}
+# - Payload: {"sub": "1", "scope": "jobs:read jobs:write"}
+#   'sub' is the numeric user id the job is billed to.
 export TOKEN="your-generated-jwt-token"
 
 # Submit a job
@@ -147,9 +147,8 @@ curl -X POST http://localhost:8080/v1/jobs \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: unique-key-123" \
   -d '{
-    "userId": 1,
     "agentSpec": "{\"image\":\"ghcr.io/your-org/agent:1.0\",\"cmd\":[\"python\",\"train.py\"]}",
-    "resourceHint": "{\"gpuType\":\"A100-80G\",\"spotOk\":true}",
+    "resourceHint": "{\"region\":\"us-east-1\",\"gpuType\":\"A100-80G\",\"spotOk\":true}",
     "maxBudget": 50.0
   }'
 
@@ -183,14 +182,13 @@ curl -H "Authorization: Bearer <TOKEN>" \
 - `SelectionPolicy` + `BalancedPolicy` - Provider selection
 - `OutboxPublisher` - RabbitMQ event publishing
 - `StorageService` - S3 presigned URL generation
-- `UsagePollingService` - Periodic usage polling
-- `Reconciler` - Stuck job recovery
+- `UsagePollingService` - Periodic usage polling (stub, not implemented)
 - `LedgerService` - Double-entry accounting logic
 
 ### Running Tests
 
 ```bash
-# Run all tests (requires Testcontainers)
+# Run all tests
 ./gradlew test
 
 # Run specific module tests
@@ -204,7 +202,10 @@ curl -H "Authorization: Bearer <TOKEN>" \
 
 Flyway migrations are in `domain/src/main/resources/db/migration/`:
 ```
-V1__init.sql    # Initial schema (jobs, providers, ledger, outbox, etc.)
+V1__init.sql                  # Initial schema (jobs, providers, ledger, outbox, etc.)
+V2__provider_registry.sql     # Unique provider names + seed rows for the shipped adapters
+V3__idempotency_per_user.sql  # Idempotency keys scoped to the user who sent them
+V4__ledger_account_names.sql  # Named ledger accounts, so balance and hold stop colliding
 ```
 
 Migrations run automatically on application startup.
@@ -215,7 +216,9 @@ Migrations run automatically on application startup.
 2. Implement `ProviderClient` interface
 3. Add `@Component` annotation
 4. Update `QuoteService` to fetch quotes
-5. Add integration test with WireMock
+5. Add a `providers` row via a Flyway migration, named after the adapter class
+   (the orchestrator resolves `jobs.provider_id` by that name and fails the submit if no row exists)
+6. Add a test for the adapter (`adapters` has no test source set yet)
 
 ## API Documentation
 
@@ -225,6 +228,10 @@ All endpoints require JWT Bearer token with appropriate scopes:
 - `jobs:read` - View job status
 - `jobs:write` - Submit jobs
 
+The `sub` claim is the numeric user id. It is the only source of the billed account, so a request
+body cannot charge another user, and a job is visible only to the user who submitted it. A token
+whose `sub` is not numeric is rejected with 403.
+
 **Token Generation** (development only):
 
 Visit [jwt.io](https://jwt.io) and create a token with:
@@ -233,7 +240,7 @@ Visit [jwt.io](https://jwt.io) and create a token with:
 - Payload:
   ```json
   {
-    "sub": "user1",
+    "sub": "1",
     "scope": "jobs:read jobs:write",
     "exp": 9999999999
   }
@@ -246,21 +253,35 @@ Visit [jwt.io](https://jwt.io) and create a token with:
 POST /v1/jobs
 Content-Type: application/json
 Authorization: Bearer {token}
-Idempotency-Key: {unique-key}  # Optional
+Idempotency-Key: {unique-key}  # Optional, reuse the same key when retrying. Scoped per user.
 
 {
-  "userId": 1,
-  "agentSpec": "{\"image\":\"...\"}",  # JSON string
-  "resourceHint": "{\"gpuType\":\"A100-80G\"}",  # JSON string
-  "maxBudget": 100.0
+  "agentSpec": "{\"image\":\"...\"}",  # Required, JSON object as a string
+  "resourceHint": "{\"region\":\"us-east-1\",\"gpuType\":\"A100-80G\"}",  # Optional, JSON object as a string
+  "maxBudget": 100.0  # Optional, omit for no cap
 }
 
 Response: 200 OK
 {
   "jobId": 123,
-  "status": "QUEUED"
+  "status": "RUNNING"
 }
 ```
+
+`agentSpec` and `resourceHint` are stored in MySQL `json` columns, so anything that is not a JSON
+object is rejected with 400. `region` and `gpuType` from `resourceHint` drive the quote lookup and
+fall back to `us-east-1` / `A100-80G` when absent.
+
+Submission is synchronous: provisioning and start finish before the response is written, so the
+status in the response is already `RUNNING`.
+
+`maxBudget` caps the hold placed at submit time, and a job whose hold would exceed it is rejected
+with 422 instead of being provisioned. The hold is one hour of the selected provider's rate plus 20
+percent, because nothing in the platform yet knows how long a job will run. Runtime is not metered,
+so `maxBudget` is not a cap on what a long job ultimately costs.
+
+Without an `Idempotency-Key` a retried submit creates a second job and a second hold. Retries must
+send the key of the original attempt.
 
 #### Get Job
 ```http
@@ -300,17 +321,26 @@ SUBMITTED → QUEUED → PROVISIONING → RUNNING → SUCCEEDED
                                      CANCELLED
 ```
 
+`POST /v1/jobs` walks this whole path inside one transaction, so `QUEUED` and `PROVISIONING` are
+never observable through the API today. Only `RUNNING` (or an error) is ever returned by submit.
+
 ## Testing
 
-### Integration Tests
+The suite is slice and unit tests, so it runs without Docker.
 
 ```bash
-# Integration tests (Testcontainers)
+# Everything
+./gradlew test
+
+# API slice, orchestrator units, and a context load on in-memory H2
 ./gradlew :app:test
 
-# WireMock test for RunPod adapter
-./gradlew :adapters-runpod:test
+# SDK against MockRestServiceServer
+./gradlew :agent-sdk:test
 ```
+
+Not yet covered: nothing exercises real MySQL, so the `json` columns and the Flyway migrations are
+only verified by reading them. `adapters` has no tests.
 
 ### Manual Testing with Postman
 

@@ -5,7 +5,8 @@ import java.math.BigDecimal;
 import java.time.Instant;
 
 @Entity
-@Table(name = "ledger_accounts")
+@Table(name = "ledger_accounts", uniqueConstraints =
+    @UniqueConstraint(name = "uk_ledger_accounts_user_type_name", columnNames = {"user_id", "type", "name"}))
 class LedgerAccount {
   @Id
   @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -13,6 +14,8 @@ class LedgerAccount {
   private Long userId;
   @Enumerated(EnumType.STRING)
   private Type type;
+  @Column(length = 40)
+  private String name;
   private String currency = "USD";
 
   public enum Type { ASSET, LIABILITY, REVENUE, EXPENSE }
@@ -22,6 +25,8 @@ class LedgerAccount {
   public void setUserId(Long u) { this.userId = u; }
   public Type getType() { return type; }
   public void setType(Type t) { this.type = t; }
+  public String getName() { return name; }
+  public void setName(String n) { this.name = n; }
   public String getCurrency() { return currency; }
   public void setCurrency(String c) { this.currency = c; }
 }

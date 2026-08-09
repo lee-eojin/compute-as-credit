@@ -443,7 +443,7 @@ post(entry.getId(), userHold.getId(),    DEBIT,  amount);
 post(entry.getId(), userBalance.getId(), CREDIT, amount);
 ```
 
-This bug demonstrates why double-entry accounting is valuable—the invariant check immediately revealed the error.
+This bug demonstrates why double-entry accounting is valuable. The invariant check immediately revealed the error.
 
 ### 3.5 Concurrency and Race Conditions
 
