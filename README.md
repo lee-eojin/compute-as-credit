@@ -29,7 +29,8 @@ A production-ready Spring Boot microservices platform for managing AI/ML workloa
 ## Features
 
 ### Core Capabilities
-- **Multi-Provider Orchestration**: Automatically select optimal GPU provider based on cost, latency, and reliability
+- **Multi-Provider Orchestration**: Select a GPU provider by cost, latency, and reliability, each
+  scaled against the other candidates so the units cannot outweigh each other
 - **Credit-based Billing**: Double-entry accounting ledger with hold/debit/refund transactions
 - **Job Lifecycle Management**: Submit → Queue → Provision → Run → Complete with full state tracking
 - **Provider Abstraction**: Plug & play adapter pattern for adding new compute providers
@@ -214,7 +215,9 @@ Migrations run automatically on application startup.
 
 1. Add adapter class in `adapters/`
 2. Implement `ProviderClient` interface
-3. Add `@Component` annotation
+3. Add `@Component`, and `@ConditionalOnProperty` if the adapter needs an endpoint that is not
+   always there. A quote whose adapter is not registered is skipped rather than picked and failed
+   at provision time, so an adapter that is switched off costs nothing.
 4. Update `QuoteService` to fetch quotes
 5. Add a `providers` row via a Flyway migration, named after the adapter class
    (the orchestrator resolves `jobs.provider_id` by that name and fails the submit if no row exists)
@@ -381,6 +384,10 @@ RABBIT_PORT=5672
 
 # Security
 JWT_SECRET=your-strong-256-bit-secret
+
+# Providers
+RUNPOD_ENABLED=false                          # No RunPod service ships with this repo
+RUNPOD_BASE_URL=https://your-runpod-endpoint  # Required when RUNPOD_ENABLED is true
 ```
 
 ## Troubleshooting

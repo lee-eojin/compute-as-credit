@@ -29,7 +29,9 @@ public class SecurityConfig {
         .authorizeHttpRequests(auth -> auth
           .requestMatchers("/swagger-ui.html", "/v3/api-docs/**", "/swagger-ui/**").permitAll()
           .requestMatchers(HttpMethod.POST, "/v1/jobs/**").hasAnyAuthority("SCOPE_jobs:write")
+          // HEAD is dispatched to the @GetMapping handler, so it needs the read scope too.
           .requestMatchers(HttpMethod.GET, "/v1/jobs/**").hasAnyAuthority("SCOPE_jobs:read")
+          .requestMatchers(HttpMethod.HEAD, "/v1/jobs/**").hasAnyAuthority("SCOPE_jobs:read")
           .anyRequest().authenticated())
         .oauth2ResourceServer(oauth -> oauth.jwt(Customizer.withDefaults()));
     return http.build();

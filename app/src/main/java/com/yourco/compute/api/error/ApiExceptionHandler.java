@@ -3,11 +3,13 @@ package com.yourco.compute.api.error;
 import com.yourco.compute.api.security.UnauthorizedCallerException;
 import com.yourco.compute.domain.error.BudgetExceededException;
 import com.yourco.compute.domain.error.JobNotFoundException;
+import com.yourco.compute.domain.error.NoProviderAvailableException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.client.RestClientException;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
@@ -35,5 +37,16 @@ public class ApiExceptionHandler {
   @ExceptionHandler(DataIntegrityViolationException.class)
   public ProblemDetail conflict(DataIntegrityViolationException e) {
     return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, "Conflicting concurrent request, retry");
+  }
+
+  @ExceptionHandler(NoProviderAvailableException.class)
+  public ProblemDetail noProvider(NoProviderAvailableException e) {
+    return ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE, e.getMessage());
+  }
+
+  /** A provider that is unreachable or answers badly is an upstream fault, not a bad request. */
+  @ExceptionHandler(RestClientException.class)
+  public ProblemDetail providerUnreachable(RestClientException e) {
+    return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_GATEWAY, "Provider call failed: " + e.getMessage());
   }
 }

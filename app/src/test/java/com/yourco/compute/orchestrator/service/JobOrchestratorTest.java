@@ -6,6 +6,8 @@ import com.yourco.compute.adapters.fake.FakeProviderClient;
 import com.yourco.compute.billing.ledger.LedgerService;
 import com.yourco.compute.domain.error.BudgetExceededException;
 import com.yourco.compute.domain.error.JobNotFoundException;
+import com.yourco.compute.domain.error.NoProviderAvailableException;
+import com.yourco.compute.orchestrator.selector.BalancedPolicy;
 import com.yourco.compute.domain.model.Job;
 import com.yourco.compute.domain.model.JobStatus;
 import com.yourco.compute.domain.model.Provider;
@@ -46,7 +48,7 @@ class JobOrchestratorTest {
   @BeforeEach
   void setUp() {
     orchestrator = new JobOrchestrator(jobs, ledger, List.of(fake), outbox, quotes,
-        providerRegistry, new ObjectMapper());
+        providerRegistry, new ObjectMapper(), new BalancedPolicy());
 
     given(jobs.save(any())).willAnswer(inv -> inv.getArgument(0));
     given(quotes.getQuotes(anyString(), anyString())).willReturn(
@@ -91,6 +93,29 @@ class JobOrchestratorTest {
     orchestrator.submit(job("{}", 1.0));
 
     verify(ledger).hold(any(UUID.class), eq(7L), eq(new BigDecimal("0.60")), any());
+  }
+
+  @Test
+  void aQuoteForAnAdapterThatIsSwitchedOffIsNotPicked() {
+    given(quotes.getQuotes(anyString(), anyString())).willReturn(List.of(
+        new QuoteService.Quote("RunPodClient", "any", "any", 0.10, 10, 0.99),
+        new QuoteService.Quote("FakeProviderClient", "any", "any", 0.50, 800, 0.98)));
+
+    Job saved = orchestrator.submit(job("{}", null));
+
+    assertThat(saved.getStatus()).isEqualTo(JobStatus.RUNNING);
+    verify(providerRegistry).findByName("FakeProviderClient");
+  }
+
+  @Test
+  void aQuoteSetWithNoRegisteredAdapterIsReportedAsUnavailable() {
+    given(quotes.getQuotes(anyString(), anyString())).willReturn(
+        List.of(new QuoteService.Quote("RunPodClient", "any", "any", 0.10, 10, 0.99)));
+
+    assertThatThrownBy(() -> orchestrator.submit(job("{}", null)))
+        .isInstanceOf(NoProviderAvailableException.class);
+
+    verify(ledger, never()).hold(any(), anyLong(), any(), any());
   }
 
   @Test

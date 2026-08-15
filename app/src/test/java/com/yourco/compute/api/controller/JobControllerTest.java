@@ -35,6 +35,7 @@ import static org.mockito.Mockito.verify;
 import static org.springframework.http.MediaType.APPLICATION_JSON;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.head;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -213,6 +214,16 @@ class JobControllerTest {
     mvc.perform(asUser("42", post("/v1/jobs/7/io"))).andExpect(status().isNotFound());
 
     verify(storage, never()).allocateForJob(anyLong());
+  }
+
+  @Test
+  void aWriteOnlyTokenCannotProbeJobsWithHead() throws Exception {
+    mvc.perform(head("/v1/jobs/7").with(jwt()
+            .jwt(token -> token.subject("42"))
+            .authorities(new SimpleGrantedAuthority("SCOPE_jobs:write"))))
+        .andExpect(status().isForbidden());
+
+    verify(orchestrator, never()).getForUser(anyLong(), anyLong());
   }
 
   private static MockHttpServletRequestBuilder asUser(String subject, MockHttpServletRequestBuilder request) {
