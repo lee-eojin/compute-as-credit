@@ -17,6 +17,13 @@ security:
   jwt:
     secret: ${JWT_SECRET:dev-secret}
 
+providers:
+  runpod:
+    # No RunPod service ships with this repository, so the adapter stays out of the candidate pool
+    # until someone points it at a real endpoint.
+    enabled: ${RUNPOD_ENABLED:false}
+    base-url: ${RUNPOD_BASE_URL:}
+
 springdoc:
   api-docs:
     enabled: true

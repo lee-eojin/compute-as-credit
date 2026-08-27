@@ -6,6 +6,7 @@ import com.yourco.compute.adapters.core.ProvisionResult;
 import com.yourco.compute.billing.ledger.LedgerService;
 import com.yourco.compute.domain.error.BudgetExceededException;
 import com.yourco.compute.domain.error.JobNotFoundException;
+import com.yourco.compute.domain.error.NoProviderAvailableException;
 import com.yourco.compute.domain.model.OutboxEvent;
 import com.yourco.compute.domain.model.Provider;
 import com.yourco.compute.domain.model.ResourceHint;
@@ -34,7 +35,7 @@ public class JobOrchestrator {
   private final JobRepository jobs;
   private final LedgerService ledger;
   private final Map<String, ProviderClient> providers;
-  private final SelectionPolicy policy = new BalancedPolicy();
+  private final SelectionPolicy policy;
   private final OutboxEventRepository outbox;
   private final QuoteService quotes;
   private final ProviderRepository providerRegistry;
@@ -42,13 +43,15 @@ public class JobOrchestrator {
 
   public JobOrchestrator(JobRepository jobs, LedgerService ledger, List<ProviderClient> providerClients,
                          OutboxEventRepository outbox, QuoteService quotes,
-                         ProviderRepository providerRegistry, ObjectMapper mapper){
+                         ProviderRepository providerRegistry, ObjectMapper mapper,
+                         SelectionPolicy policy){
     this.jobs = jobs;
     this.ledger = ledger;
     this.outbox = outbox;
     this.quotes = quotes;
     this.providerRegistry = providerRegistry;
     this.mapper = mapper;
+    this.policy = policy;
     this.providers = providerClients.stream()
         .collect(Collectors.toMap(pc -> pc.getClass().getSimpleName(), pc -> pc));
   }
@@ -62,9 +65,14 @@ public class JobOrchestrator {
 
     ResourceHint hint = ResourceHint.parse(mapper, saved.getResourceHint());
     List<QuoteService.Quote> qs = quotes.getQuotes(hint.region(), hint.gpuType());
+    // A quote for an adapter that is switched off would be picked and then fail at provision time.
     List<SelectionPolicy.Quote> policyQuotes = qs.stream()
+        .filter(q -> providers.containsKey(q.provider()))
         .map(q -> new SelectionPolicy.Quote(q.provider(), q.onDemandPerHour(), q.latencyMs(), q.reliability()))
         .toList();
+    if (policyQuotes.isEmpty()) {
+      throw new NoProviderAvailableException(hint.region(), hint.gpuType());
+    }
     SelectionPolicy.Quote choice = policy.pick(policyQuotes);
 
     BigDecimal hold = BigDecimal.valueOf(choice.ratePerHour()).multiply(HOLD_MARGIN);
