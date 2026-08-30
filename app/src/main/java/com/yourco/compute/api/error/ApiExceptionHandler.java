@@ -4,6 +4,7 @@ import com.yourco.compute.api.security.UnauthorizedCallerException;
 import com.yourco.compute.domain.error.BudgetExceededException;
 import com.yourco.compute.domain.error.JobNotFoundException;
 import com.yourco.compute.domain.error.NoProviderAvailableException;
+import com.yourco.compute.domain.error.UnsupportedResourceHintException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -17,6 +18,12 @@ public class ApiExceptionHandler {
   @ExceptionHandler(JobNotFoundException.class)
   public ProblemDetail jobNotFound(JobNotFoundException e) {
     return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, e.getMessage());
+  }
+
+  /** The hint parsed cleanly but named a region or GPU the platform does not broker. */
+  @ExceptionHandler(UnsupportedResourceHintException.class)
+  public ProblemDetail unsupportedResourceHint(UnsupportedResourceHintException e) {
+    return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, e.getMessage());
   }
 
   @ExceptionHandler(BudgetExceededException.class)

@@ -1,8 +1,8 @@
 package com.yourco.compute.api.controller;
 
 import com.yourco.compute.api.dto.JobApiModels.*;
-import com.yourco.compute.api.infra.IdempotencyService;
 import com.yourco.compute.api.security.CallerId;
+import com.yourco.compute.api.service.JobSubmissionService;
 import com.yourco.compute.domain.model.Job;
 import com.yourco.compute.domain.model.JobStatus;
 import com.yourco.compute.orchestrator.service.JobOrchestrator;
@@ -14,21 +14,17 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.Optional;
-
 @RestController
 @RequestMapping("/v1/jobs")
 public class JobController {
-  private static final String SUBMIT_SCOPE = "JOB_SUBMIT";
-
+  private final JobSubmissionService submissions;
   private final JobOrchestrator orchestrator;
   private final StorageService storage;
-  private final IdempotencyService idem;
 
-  public JobController(JobOrchestrator orchestrator, StorageService storage, IdempotencyService idem){
+  public JobController(JobSubmissionService submissions, JobOrchestrator orchestrator, StorageService storage){
+    this.submissions = submissions;
     this.orchestrator = orchestrator;
     this.storage = storage;
-    this.idem = idem;
   }
 
   @PostMapping
@@ -36,29 +32,14 @@ public class JobController {
                                            @RequestHeader(name="Idempotency-Key", required=false)
                                            @Size(min=1, max=64) String idemKey,
                                            @RequestBody @Validated SubmitReq req){
-    long userId = CallerId.of(jwt);
-
-    if (idemKey != null) {
-      Optional<Long> existing = idem.findJob(idemKey, SUBMIT_SCOPE, userId);
-      if (existing.isPresent()) {
-        Job j = orchestrator.getForUser(existing.get(), userId);
-        return ResponseEntity.ok(new SubmitRes(j.getId(), j.getStatus().name()));
-      }
-    }
-
     Job job = new Job();
-    job.setUserId(userId);
+    job.setUserId(CallerId.of(jwt));
     job.setAgentSpec(req.agentSpec());
     job.setResourceHint(req.resourceHint());
     job.setMaxBudget(req.maxBudget());
     job.setStatus(JobStatus.SUBMITTED);
 
-    Job saved = orchestrator.submit(job);
-
-    if (idemKey != null) {
-      idem.remember(idemKey, SUBMIT_SCOPE, userId, saved.getId());
-    }
-
+    Job saved = submissions.submit(job, idemKey);
     return ResponseEntity.ok(new SubmitRes(saved.getId(), saved.getStatus().name()));
   }
 

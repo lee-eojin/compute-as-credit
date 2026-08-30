@@ -123,9 +123,10 @@ docker compose ps
 ./gradlew clean build -x test
 
 # Run API Gateway (http://localhost:8080)
-make run
+# JWT_SECRET has no default, so either export one of at least 32 bytes or use the dev profile.
+SPRING_PROFILES_ACTIVE=dev ./gradlew :app:bootRun
 # OR
-./gradlew :app:bootRun
+JWT_SECRET=your-strong-256-bit-secret make run
 ```
 
 ### 4. Explore API
@@ -135,9 +136,9 @@ Open Swagger UI: **http://localhost:8080/swagger-ui.html**
 Or via curl:
 ```bash
 # Generate JWT token (for development)
-# Use https://jwt.io to create a token with:
+# Run the app with SPRING_PROFILES_ACTIVE=dev, then use https://jwt.io with:
 # - Algorithm: HS256
-# - Secret: dev-secret
+# - Secret: dev-only-secret-not-for-production-32b
 # - Payload: {"sub": "1", "scope": "jobs:read jobs:write"}
 #   'sub' is the numeric user id the job is billed to.
 export TOKEN="your-generated-jwt-token"
@@ -177,7 +178,9 @@ curl -H "Authorization: Bearer <TOKEN>" \
 - `JobController` - REST endpoints (submit, get, allocate I/O)
 - `SecurityConfig` - JWT + OAuth2 resource server
 - `JobApiModels` - DTO records (SubmitReq, SubmitRes, JobRes)
+- `JobSubmissionService` - Submit plus its idempotency key, in one transaction
 - `IdempotencyService` - Request deduplication
+- `JwtSecret` - Rejects a missing or undersized signing key at startup
 - `JobOrchestrator` - Core job lifecycle management
 - `QuoteService` - Provider price aggregation
 - `SelectionPolicy` + `BalancedPolicy` - Provider selection
@@ -239,7 +242,7 @@ whose `sub` is not numeric is rejected with 403.
 
 Visit [jwt.io](https://jwt.io) and create a token with:
 - Algorithm: `HS256`
-- Secret: `dev-secret`
+- Secret: `dev-only-secret-not-for-production-32b` (the `dev` profile value)
 - Payload:
   ```json
   {
@@ -272,8 +275,19 @@ Response: 200 OK
 ```
 
 `agentSpec` and `resourceHint` are stored in MySQL `json` columns, so anything that is not a JSON
-object is rejected with 400. `region` and `gpuType` from `resourceHint` drive the quote lookup and
-fall back to `us-east-1` / `A100-80G` when absent.
+object is rejected with 400. `agentSpec` is capped at 8192 characters and `resourceHint` at 512.
+
+`region` and `gpuType` from `resourceHint` drive the quote lookup and fall back to `us-east-1` /
+`A100-80G` when absent. Both are checked against what the platform brokers, and an unsupported value
+is a 400 rather than a silent substitution:
+
+| Field | Accepted values |
+| --- | --- |
+| `region` | `us-east-1`, `us-west-2`, `eu-west-1`, `ap-northeast-2` |
+| `gpuType` | `A100-80G`, `H100-80G`, `L40S`, `A10G` |
+
+The check is not only input hygiene. The quote cache is keyed on these two values, so free-form
+input would let one caller mint unlimited distinct keys and evict every other tenant's entries.
 
 Submission is synchronous: provisioning and start finish before the response is written, so the
 status in the response is already `RUNNING`.
@@ -285,6 +299,11 @@ so `maxBudget` is not a cap on what a long job ultimately costs.
 
 Without an `Idempotency-Key` a retried submit creates a second job and a second hold. Retries must
 send the key of the original attempt.
+
+The job, its ledger hold, and the key are written in one transaction, so a crash partway through
+leaves none of them behind rather than a charge with no key to find it by. Two requests carrying the
+same key at once are resolved by the `uk_idempotency_scope_user` index: the loser rolls its own hold
+back and gets a 409, and retrying it returns the winner's job.
 
 #### Get Job
 ```http
@@ -383,7 +402,7 @@ RABBIT_HOST=localhost
 RABBIT_PORT=5672
 
 # Security
-JWT_SECRET=your-strong-256-bit-secret
+JWT_SECRET=your-strong-256-bit-secret          # Required, at least 32 bytes, no default
 
 # Providers
 RUNPOD_ENABLED=false                          # No RunPod service ships with this repo
@@ -440,7 +459,7 @@ docker compose ps  # Check if rabbitmq container is up
 **Fix**:
 ```bash
 # Regenerate token at https://jwt.io
-# Paste token and verify with secret: dev-secret
+# Paste token and verify with the secret the app was started with
 # Ensure 'exp' claim is in the future
 ```
 

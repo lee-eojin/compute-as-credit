@@ -11,6 +11,7 @@ import com.yourco.compute.orchestrator.selector.BalancedPolicy;
 import com.yourco.compute.domain.model.Job;
 import com.yourco.compute.domain.model.JobStatus;
 import com.yourco.compute.domain.model.Provider;
+import com.yourco.compute.domain.model.ResourceHint;
 import com.yourco.compute.domain.repo.JobRepository;
 import com.yourco.compute.domain.repo.OutboxEventRepository;
 import com.yourco.compute.domain.repo.ProviderRepository;
@@ -27,7 +28,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
@@ -51,7 +51,7 @@ class JobOrchestratorTest {
         providerRegistry, new ObjectMapper(), new BalancedPolicy());
 
     given(jobs.save(any())).willAnswer(inv -> inv.getArgument(0));
-    given(quotes.getQuotes(anyString(), anyString())).willReturn(
+    given(quotes.getQuotes(any(ResourceHint.class))).willReturn(
         List.of(new QuoteService.Quote("FakeProviderClient", "any", "any", 0.50, 800, 0.98)));
     given(providerRegistry.findByName("FakeProviderClient")).willReturn(Optional.of(registeredProvider));
   }
@@ -60,14 +60,14 @@ class JobOrchestratorTest {
   void theResourceHintPicksTheRegionAndGpuTypeToQuote() {
     orchestrator.submit(job("{\"region\":\"eu-west-1\",\"gpuType\":\"H100-80G\"}", null));
 
-    verify(quotes).getQuotes("eu-west-1", "H100-80G");
+    verify(quotes).getQuotes(new ResourceHint("eu-west-1", "H100-80G"));
   }
 
   @Test
   void anAbsentResourceHintFallsBackToThePlatformDefaults() {
     orchestrator.submit(job(null, null));
 
-    verify(quotes).getQuotes("us-east-1", "A100-80G");
+    verify(quotes).getQuotes(new ResourceHint("us-east-1", "A100-80G"));
   }
 
   @Test
@@ -97,7 +97,7 @@ class JobOrchestratorTest {
 
   @Test
   void aQuoteForAnAdapterThatIsSwitchedOffIsNotPicked() {
-    given(quotes.getQuotes(anyString(), anyString())).willReturn(List.of(
+    given(quotes.getQuotes(any(ResourceHint.class))).willReturn(List.of(
         new QuoteService.Quote("RunPodClient", "any", "any", 0.10, 10, 0.99),
         new QuoteService.Quote("FakeProviderClient", "any", "any", 0.50, 800, 0.98)));
 
@@ -109,7 +109,7 @@ class JobOrchestratorTest {
 
   @Test
   void aQuoteSetWithNoRegisteredAdapterIsReportedAsUnavailable() {
-    given(quotes.getQuotes(anyString(), anyString())).willReturn(
+    given(quotes.getQuotes(any(ResourceHint.class))).willReturn(
         List.of(new QuoteService.Quote("RunPodClient", "any", "any", 0.10, 10, 0.99)));
 
     assertThatThrownBy(() -> orchestrator.submit(job("{}", null)))
