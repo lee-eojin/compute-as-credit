@@ -1,0 +1,5 @@
+# Development only. Production must supply JWT_SECRET, which has no default so that a missing
+# value fails startup rather than turning every request into a 401.
+security:
+  jwt:
+    secret: dev-only-secret-not-for-production-32b

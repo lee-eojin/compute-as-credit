@@ -1,12 +1,15 @@
 package com.yourco.compute.api.controller;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yourco.compute.api.error.ApiExceptionHandler;
-import com.yourco.compute.api.infra.IdempotencyService;
 import com.yourco.compute.api.security.SecurityConfig;
+import com.yourco.compute.api.service.JobSubmissionService;
 import com.yourco.compute.domain.error.BudgetExceededException;
 import com.yourco.compute.domain.error.JobNotFoundException;
+import com.yourco.compute.domain.error.UnsupportedResourceHintException;
 import com.yourco.compute.domain.model.Job;
 import com.yourco.compute.domain.model.JobStatus;
+import com.yourco.compute.domain.model.ResourceHint;
 import com.yourco.compute.orchestrator.service.JobOrchestrator;
 import com.yourco.compute.orchestrator.storage.StorageService;
 import org.junit.jupiter.api.Test;
@@ -17,18 +20,22 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 import java.math.BigDecimal;
-import java.util.Optional;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -44,148 +51,144 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @Import({SecurityConfig.class, ApiExceptionHandler.class})
 @TestPropertySource(properties = "security.jwt.secret=test-secret-that-is-long-enough-for-hs256")
 class JobControllerTest {
-  private static final String BODY = """
-      {"agentSpec":"{\\"image\\":\\"x\\"}","resourceHint":"{\\"gpuType\\":\\"A100-80G\\"}","maxBudget":50.0}""";
+  private static final ObjectMapper MAPPER = new ObjectMapper();
 
   @Autowired MockMvc mvc;
+  @MockBean JobSubmissionService submissions;
   @MockBean JobOrchestrator orchestrator;
   @MockBean StorageService storage;
-  @MockBean IdempotencyService idem;
 
   @Test
   void theJobIsBilledToTheTokenSubject() throws Exception {
-    given(orchestrator.submit(any())).willAnswer(inv -> withStatus(inv.getArgument(0), JobStatus.RUNNING));
+    acceptSubmissions();
 
-    mvc.perform(asUser("42", post("/v1/jobs").contentType(APPLICATION_JSON).content(BODY)))
+    mvc.perform(asUser("42", post("/v1/jobs").contentType(APPLICATION_JSON).content(body())))
         .andExpect(status().isOk());
 
-    ArgumentCaptor<Job> submitted = ArgumentCaptor.forClass(Job.class);
-    verify(orchestrator).submit(submitted.capture());
-    assertThat(submitted.getValue().getUserId()).isEqualTo(42L);
+    assertThat(submitted().getUserId()).isEqualTo(42L);
   }
 
   @Test
   void aUserIdInTheBodyIsIgnoredRatherThanBilled() throws Exception {
-    given(orchestrator.submit(any())).willAnswer(inv -> withStatus(inv.getArgument(0), JobStatus.RUNNING));
+    acceptSubmissions();
     String spoofed = """
         {"userId":999,"agentSpec":"{}","resourceHint":"{}","maxBudget":50.0}""";
 
     mvc.perform(asUser("42", post("/v1/jobs").contentType(APPLICATION_JSON).content(spoofed)))
         .andExpect(status().isOk());
 
-    ArgumentCaptor<Job> submitted = ArgumentCaptor.forClass(Job.class);
-    verify(orchestrator).submit(submitted.capture());
-    assertThat(submitted.getValue().getUserId()).isEqualTo(42L);
+    assertThat(submitted().getUserId()).isEqualTo(42L);
   }
 
   @ParameterizedTest
   @ValueSource(strings = {"user1", "+42", " 42", "042", "٤٢", "99999999999999999999", ""})
   void aSubjectThatIsNotOneCanonicalUserIdCannotSubmit(String subject) throws Exception {
-    mvc.perform(asUser(subject, post("/v1/jobs").contentType(APPLICATION_JSON).content(BODY)))
+    mvc.perform(asUser(subject, post("/v1/jobs").contentType(APPLICATION_JSON).content(body())))
         .andExpect(status().isForbidden());
 
-    verify(orchestrator, never()).submit(any());
+    verify(submissions, never()).submit(any(), anyString());
   }
 
   @Test
   void agentSpecThatIsNotAJsonObjectIsRejectedBeforeItReachesTheDatabase() throws Exception {
-    String plainText = """
-        {"agentSpec":"pytorch-trainer","resourceHint":"{}","maxBudget":50.0}""";
-
-    mvc.perform(asUser("42", post("/v1/jobs").contentType(APPLICATION_JSON).content(plainText)))
-        .andExpect(status().isBadRequest());
-
-    verify(orchestrator, never()).submit(any());
+    postExpectingBadRequest(body("pytorch-trainer", "{}", 50.0));
   }
 
   @Test
   void agentSpecWithTrailingJunkIsRejectedBeforeItReachesTheDatabase() throws Exception {
-    String trailing = """
-        {"agentSpec":"{\\"image\\":\\"x\\"} junk","resourceHint":"{}","maxBudget":50.0}""";
-
-    mvc.perform(asUser("42", post("/v1/jobs").contentType(APPLICATION_JSON).content(trailing)))
-        .andExpect(status().isBadRequest());
-
-    verify(orchestrator, never()).submit(any());
+    postExpectingBadRequest(body("{\"image\":\"x\"} junk", "{}", 50.0));
   }
 
   @Test
   void anEmptyBodyIsRejectedBecauseAgentSpecIsRequired() throws Exception {
-    mvc.perform(asUser("42", post("/v1/jobs").contentType(APPLICATION_JSON).content("{}")))
-        .andExpect(status().isBadRequest());
-
-    verify(orchestrator, never()).submit(any());
+    postExpectingBadRequest("{}");
   }
 
   @Test
   void aBudgetTooLargeForTheColumnIsRejectedInsteadOfCrashing() throws Exception {
-    String huge = """
-        {"agentSpec":"{}","resourceHint":"{}","maxBudget":1e309}""";
-
-    mvc.perform(asUser("42", post("/v1/jobs").contentType(APPLICATION_JSON).content(huge)))
-        .andExpect(status().isBadRequest());
-
-    verify(orchestrator, never()).submit(any());
+    postExpectingBadRequest("""
+        {"agentSpec":"{}","resourceHint":"{}","maxBudget":1e309}""");
   }
 
   @Test
-  void anIdempotencyKeyIsLookedUpUnderTheCallerSoOtherTenantsKeysDoNotCollide() throws Exception {
-    given(idem.findJob("shared-key", "JOB_SUBMIT", 42L)).willReturn(Optional.empty());
-    given(orchestrator.submit(any())).willAnswer(inv -> withStatus(inv.getArgument(0), JobStatus.RUNNING));
+  void anAgentSpecPastTheColumnBudgetIsRejectedRatherThanStored() throws Exception {
+    postExpectingBadRequest(body("{\"pad\":\"" + "x".repeat(9000) + "\"}", "{}", 50.0));
+  }
+
+  @Test
+  void aResourceHintPastItsLimitIsRejectedRatherThanStored() throws Exception {
+    postExpectingBadRequest(body("{}", "{\"pad\":\"" + "x".repeat(600) + "\"}", 50.0));
+  }
+
+  @Test
+  void theIdempotencyKeyHeaderIsHandedToTheSubmissionService() throws Exception {
+    acceptSubmissions();
 
     mvc.perform(asUser("42", post("/v1/jobs")
             .header("Idempotency-Key", "shared-key")
-            .contentType(APPLICATION_JSON).content(BODY)))
+            .contentType(APPLICATION_JSON).content(body())))
         .andExpect(status().isOk());
 
-    verify(idem).findJob("shared-key", "JOB_SUBMIT", 42L);
-    verify(idem).remember(eq("shared-key"), eq("JOB_SUBMIT"), eq(42L), any());
-    verify(orchestrator).submit(any());
+    verify(submissions).submit(any(), eq("shared-key"));
   }
 
   @Test
-  void aReplayedKeyReturnsTheOriginalJobWithoutSubmittingAgain() throws Exception {
-    Job original = withStatus(new Job(), JobStatus.RUNNING);
-    original.setUserId(42L);
-    given(idem.findJob("shared-key", "JOB_SUBMIT", 42L)).willReturn(Optional.of(7L));
-    given(orchestrator.getForUser(7L, 42L)).willReturn(original);
+  void aRequestWithoutTheHeaderSubmitsWithNoKeyAtAll() throws Exception {
+    acceptSubmissions();
 
-    mvc.perform(asUser("42", post("/v1/jobs")
-            .header("Idempotency-Key", "shared-key")
-            .contentType(APPLICATION_JSON).content(BODY)))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.status").value("RUNNING"));
+    mvc.perform(asUser("42", post("/v1/jobs").contentType(APPLICATION_JSON).content(body())))
+        .andExpect(status().isOk());
 
-    verify(orchestrator, never()).submit(any());
+    verify(submissions).submit(any(), isNull());
   }
 
   @Test
   void anIdempotencyKeyTooLongForTheColumnIsRejectedBeforeAnythingIsCharged() throws Exception {
     mvc.perform(asUser("42", post("/v1/jobs")
             .header("Idempotency-Key", "k".repeat(65))
-            .contentType(APPLICATION_JSON).content(BODY)))
+            .contentType(APPLICATION_JSON).content(body())))
         .andExpect(status().isBadRequest());
 
-    verify(orchestrator, never()).submit(any());
+    verify(submissions, never()).submit(any(), anyString());
   }
 
   @Test
   void aBlankIdempotencyKeyIsRejectedRatherThanStored() throws Exception {
     mvc.perform(asUser("42", post("/v1/jobs")
             .header("Idempotency-Key", "")
-            .contentType(APPLICATION_JSON).content(BODY)))
+            .contentType(APPLICATION_JSON).content(body())))
         .andExpect(status().isBadRequest());
 
-    verify(orchestrator, never()).submit(any());
+    verify(submissions, never()).submit(any(), anyString());
   }
 
   @Test
   void aHoldOverTheBudgetIsReportedAsUnprocessable() throws Exception {
-    given(orchestrator.submit(any()))
+    given(submissions.submit(any(), any()))
         .willThrow(new BudgetExceededException(new BigDecimal("0.744"), new BigDecimal("0.50")));
 
-    mvc.perform(asUser("42", post("/v1/jobs").contentType(APPLICATION_JSON).content(BODY)))
+    mvc.perform(asUser("42", post("/v1/jobs").contentType(APPLICATION_JSON).content(body())))
         .andExpect(status().isUnprocessableEntity());
+  }
+
+  @Test
+  void aRegionThePlatformDoesNotBrokerIsReportedAsABadRequest() throws Exception {
+    given(submissions.submit(any(), any())).willThrow(
+        new UnsupportedResourceHintException("region", "mars-north-1", ResourceHint.SUPPORTED_REGIONS));
+
+    mvc.perform(asUser("42", post("/v1/jobs").contentType(APPLICATION_JSON).content(body())))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void aKeyThatLostTheRaceIsReportedAsAConflictSoTheCallerRetries() throws Exception {
+    given(submissions.submit(any(), any()))
+        .willThrow(new DataIntegrityViolationException("uk_idempotency_scope_user"));
+
+    mvc.perform(asUser("42", post("/v1/jobs")
+            .header("Idempotency-Key", "shared-key")
+            .contentType(APPLICATION_JSON).content(body())))
+        .andExpect(status().isConflict());
   }
 
   @Test
@@ -224,6 +227,36 @@ class JobControllerTest {
         .andExpect(status().isForbidden());
 
     verify(orchestrator, never()).getForUser(anyLong(), anyLong());
+  }
+
+  private void acceptSubmissions() {
+    given(submissions.submit(any(), any()))
+        .willAnswer(inv -> withStatus(inv.getArgument(0), JobStatus.RUNNING));
+  }
+
+  private Job submitted() {
+    ArgumentCaptor<Job> captor = ArgumentCaptor.forClass(Job.class);
+    verify(submissions).submit(captor.capture(), any());
+    return captor.getValue();
+  }
+
+  private void postExpectingBadRequest(String payload) throws Exception {
+    mvc.perform(asUser("42", post("/v1/jobs").contentType(APPLICATION_JSON).content(payload)))
+        .andExpect(status().isBadRequest());
+
+    verify(submissions, never()).submit(any(), anyString());
+  }
+
+  private static String body() throws Exception {
+    return body("{\"image\":\"x\"}", "{\"gpuType\":\"A100-80G\"}", 50.0);
+  }
+
+  private static String body(String agentSpec, String resourceHint, Double maxBudget) throws Exception {
+    Map<String, Object> payload = new LinkedHashMap<>();
+    payload.put("agentSpec", agentSpec);
+    payload.put("resourceHint", resourceHint);
+    payload.put("maxBudget", maxBudget);
+    return MAPPER.writeValueAsString(payload);
   }
 
   private static MockHttpServletRequestBuilder asUser(String subject, MockHttpServletRequestBuilder request) {

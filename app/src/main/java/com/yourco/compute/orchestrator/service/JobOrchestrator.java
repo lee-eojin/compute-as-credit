@@ -64,7 +64,7 @@ public class JobOrchestrator {
     outbox.save(event("JobSubmitted", saved.getId()));
 
     ResourceHint hint = ResourceHint.parse(mapper, saved.getResourceHint());
-    List<QuoteService.Quote> qs = quotes.getQuotes(hint.region(), hint.gpuType());
+    List<QuoteService.Quote> qs = quotes.getQuotes(hint);
     // A quote for an adapter that is switched off would be picked and then fail at provision time.
     List<SelectionPolicy.Quote> policyQuotes = qs.stream()
         .filter(q -> providers.containsKey(q.provider()))

@@ -15,7 +15,7 @@ server:
 
 security:
   jwt:
-    secret: ${JWT_SECRET:dev-secret}
+    secret: ${JWT_SECRET:}
 
 providers:
   runpod:

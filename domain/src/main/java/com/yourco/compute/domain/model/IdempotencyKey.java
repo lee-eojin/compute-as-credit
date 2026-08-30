@@ -3,7 +3,10 @@ package com.yourco.compute.domain.model;
 import jakarta.persistence.*;
 import java.time.Instant;
 
-@Entity @Table(name="idempotency_keys")
+/** The constraint is what makes a concurrent replay lose, so it is declared here as well as in V3. */
+@Entity
+@Table(name="idempotency_keys", uniqueConstraints =
+    @UniqueConstraint(name = "uk_idempotency_scope_user", columnNames = {"idem_key", "scope", "user_id"}))
 public class IdempotencyKey {
   @Id @GeneratedValue(strategy = GenerationType.IDENTITY) private Long id;
   @Column(name="idem_key", length=64, nullable=false) private String key;

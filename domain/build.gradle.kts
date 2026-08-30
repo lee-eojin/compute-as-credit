@@ -9,4 +9,7 @@ dependencies {
   implementation("org.springframework.boot:spring-boot-starter-amqp")
   implementation("io.micrometer:micrometer-observation")
   runtimeOnly("com.mysql:mysql-connector-j")
+
+  testImplementation("org.junit.jupiter:junit-jupiter-params")
+  testImplementation("org.assertj:assertj-core")
 }
