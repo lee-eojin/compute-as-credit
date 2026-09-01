@@ -123,10 +123,11 @@ docker compose ps
 ./gradlew clean build -x test
 
 # Run API Gateway (http://localhost:8080)
-# JWT_SECRET has no default, so either export one of at least 32 bytes or use the dev profile.
+# JWT_SECRET and STORAGE_SIGNING_SECRET have no defaults, so either export both
+# (at least 32 bytes each) or use the dev profile, which carries development values.
 SPRING_PROFILES_ACTIVE=dev ./gradlew :app:bootRun
 # OR
-JWT_SECRET=your-strong-256-bit-secret make run
+JWT_SECRET=... STORAGE_SIGNING_SECRET=... make run
 ```
 
 ### 4. Explore API
@@ -185,7 +186,8 @@ curl -H "Authorization: Bearer <TOKEN>" \
 - `QuoteService` - Provider price aggregation
 - `SelectionPolicy` + `BalancedPolicy` - Provider selection
 - `OutboxPublisher` - RabbitMQ event publishing
-- `StorageService` - S3 presigned URL generation
+- `StorageService` - Signed, expiring IO URLs
+- `StorageSignature` - HMAC over job id, operation and deadline
 - `UsagePollingService` - Periodic usage polling (stub, not implemented)
 - `LedgerService` - Double-entry accounting logic
 
@@ -333,6 +335,16 @@ Response: 200 OK
 }
 ```
 
+Each URL carries an `expires` deadline and an HMAC-SHA256 `sig` over the job id, the operation and
+that deadline. Upload and download are signed separately, so a read capability is not a write one,
+and neither can be moved to another job or given a later deadline without invalidating the
+signature. The signing secret never leaves the server, which is what makes the ownership check on
+this endpoint mean something: before, the token was `token-{jobId}` and anyone who could guess an id
+could build the URLs without calling the API at all.
+
+The URLs point at `storage.base-url`, which no service in this repository serves. Wiring a real
+object store means having it verify `sig` the same way `StorageSignature` does.
+
 ### Job Lifecycle
 
 ```
@@ -403,6 +415,10 @@ RABBIT_PORT=5672
 
 # Security
 JWT_SECRET=your-strong-256-bit-secret          # Required, at least 32 bytes, no default
+
+# Storage
+STORAGE_SIGNING_SECRET=your-strong-secret       # Required, at least 32 bytes, no default
+STORAGE_BASE_URL=https://storage.internal       # Host that serves the signed IO URLs
 
 # Providers
 RUNPOD_ENABLED=false                          # No RunPod service ships with this repo

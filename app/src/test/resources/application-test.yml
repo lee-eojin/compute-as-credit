@@ -13,3 +13,6 @@ spring:
 security:
   jwt:
     secret: test-secret-that-is-long-enough-for-hs256
+
+storage:
+  signing-secret: test-storage-secret-long-enough-to-sign

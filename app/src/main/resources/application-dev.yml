@@ -3,3 +3,6 @@
 security:
   jwt:
     secret: dev-only-secret-not-for-production-32b
+
+storage:
+  signing-secret: dev-only-storage-secret-not-for-prod
