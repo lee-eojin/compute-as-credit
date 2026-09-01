@@ -17,6 +17,13 @@ security:
   jwt:
     secret: ${JWT_SECRET:}
 
+storage:
+  base-url: ${STORAGE_BASE_URL:https://storage.internal}
+  # No default. An IO URL nobody can forge is the whole point, so an unset secret has to stop
+  # startup rather than quietly sign every capability with a value the caller could guess.
+  signing-secret: ${STORAGE_SIGNING_SECRET:}
+  url-ttl: PT1H
+
 providers:
   runpod:
     # No RunPod service ships with this repository, so the adapter stays out of the candidate pool
